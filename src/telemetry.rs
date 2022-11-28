@@ -3,9 +3,9 @@ use tracing::{subscriber::set_global_default, Subscriber};
 #[allow(unused_imports)]
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Registry};
 
-pub fn get_subscriber(env_filter: String) -> impl Subscriber + Send + Sync {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(env_filter));
+pub fn get_subscriber(level: &str) -> impl Subscriber + Send + Sync {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or(level));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_level(true)

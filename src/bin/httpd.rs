@@ -6,7 +6,7 @@ use std::net::TcpListener;
 
 #[tokio::main]
 pub async fn main() -> Result<(), anyhow::Error> {
-    let subscriber = get_subscriber("info".into());
+    let subscriber = get_subscriber("info");
     init_subscriber(subscriber);
 
     let ctx = AppContext::build().await;

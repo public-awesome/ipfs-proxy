@@ -48,3 +48,4 @@ opentelemetry = { version = "0.18", features = [
 ] }
 tracing-subscriber = "0.3"
 infer = "0"
+env_logger = "0.10"

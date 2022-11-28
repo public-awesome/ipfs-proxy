@@ -19,6 +19,12 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(IpfsObject::RemoteUrl).string().not_null())
+                    .col(ColumnDef::new(IpfsObject::ContentType).string().not_null())
+                    .col(
+                        ColumnDef::new(IpfsObject::ContentSize)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(IpfsObject::CachedAt).date_time().not_null())
                     .col(
                         ColumnDef::new(IpfsObject::LastAccessedAt)
@@ -32,6 +38,7 @@ impl MigrationTrait for Migration {
         manager
             .create_index(
                 sea_query::Index::create()
+                    .name("remote_urls")
                     .table(IpfsObject::Table)
                     .col(IpfsObject::RemoteUrl)
                     .unique()
@@ -57,4 +64,6 @@ enum IpfsObject {
     RemoteUrl,
     CachedAt,
     LastAccessedAt,
+    ContentSize,
+    ContentType,
 }

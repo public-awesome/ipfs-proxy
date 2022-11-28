@@ -17,6 +17,7 @@ use tracing::{debug, error, info};
 use crate::app_context::AppContext;
 use crate::caching::Data;
 use crate::caching::{get_caching, set_caching};
+use entity::ipfs_object::update_entry;
 
 lazy_static! {
     static ref BLOCKED_GATEWAYS: tokio::sync::Mutex<DashMap<String, DateTime<Utc>>> =
@@ -52,6 +53,21 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
         }
         Ok(cached_data) => {
             if let Some(cached_data) = cached_data {
+                update_entry(
+                    &ctx.db,
+                    ipfs_url,
+                    &cached_data
+                        .content_type
+                        .as_ref()
+                        .map(|ct| ct.to_owned())
+                        .unwrap_or_default(),
+                    cached_data
+                        .bytes
+                        .as_ref()
+                        .map(|b| b.len())
+                        .unwrap_or_default() as i64,
+                )
+                .await?;
                 return Ok(cached_data);
             }
         }
@@ -124,10 +140,16 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                         let bytes = response.bytes().await?;
                         set_caching(ctx.clone(), ipfs_url, &bytes).await?;
 
+                        let content_size = bytes.len();
+
                         let result = Data {
-                            content_type,
+                            content_type: content_type.clone(),
                             bytes: Some(bytes),
                         };
+
+                        let content_type = content_type.unwrap_or_default();
+
+                        update_entry(&ctx.db, ipfs_url, &content_type, content_size as i64).await?;
 
                         return Ok(result);
                     }
