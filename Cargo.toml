@@ -38,8 +38,6 @@ serde = "1"
 futures = "0.3"
 bytes = "1.2"
 tempfile = "3"
-tracing-opentelemetry = { version = "0", features = [] }
-tracing-logfmt = "0.2"
 opentelemetry = { version = "0.18", features = [
   "metrics",
   "trace",
@@ -49,3 +47,4 @@ opentelemetry = { version = "0.18", features = [
 tracing-subscriber = "0.3"
 infer = "0"
 env_logger = "0.10"
+async-recursion = "1"

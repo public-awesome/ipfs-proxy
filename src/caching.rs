@@ -1,10 +1,13 @@
 use anyhow::anyhow;
+use async_recursion::async_recursion;
 use bytes::Bytes;
+use sea_orm::entity::prelude::*;
 use std::io::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::fs;
+use tracing::debug;
 
 use crate::AppContext;
 
@@ -14,17 +17,27 @@ pub struct Data {
     pub bytes: Option<Bytes>,
 }
 
+#[async_recursion]
 pub async fn get_caching(
     ctx: Arc<AppContext>,
     ipfs_url: &str,
 ) -> Result<Option<Data>, anyhow::Error> {
-    let filename = caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory).await?;
+    let filename =
+        caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, None, false).await?;
     let filename = filename.as_str();
 
-    if Path::new(filename).exists() {
+    debug!("Looking for {filename}");
+    if Path::new(filename).is_file() {
         let bytes = fs::read(filename).await?;
 
-        let content_type = infer::get(&bytes).map(|k| k.mime_type().to_string());
+        let object = entity::ipfs_object::Entity::find()
+            .filter(entity::ipfs_object::Column::RemoteUrl.eq(ipfs_url))
+            .one(&ctx.db)
+            .await?;
+        let content_type = match object {
+            Some(object) => Some(object.content_type),
+            None => infer::get(&bytes).map(|k| k.mime_type().to_string()),
+        };
 
         let data = Data {
             content_type,
@@ -32,6 +45,10 @@ pub async fn get_caching(
         };
 
         return Ok(Some(data));
+    }
+
+    if !ipfs_url.ends_with('/') {
+        return get_caching(ctx, &format!("{ipfs_url}/")).await;
     }
 
     Ok(None)
@@ -42,7 +59,8 @@ pub async fn set_caching(
     ipfs_url: &str,
     data: &Bytes,
 ) -> Result<(), anyhow::Error> {
-    let filename = caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory).await?;
+    let filename =
+        caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, Some(data), true).await?;
     let filename = filename.as_str();
 
     let mut tmp_file = NamedTempFile::new()?;
@@ -53,7 +71,12 @@ pub async fn set_caching(
     Ok(())
 }
 
-async fn caching_filename(ipfs_url: &str, directory: &str) -> Result<String, anyhow::Error> {
+async fn caching_filename(
+    ipfs_url: &str,
+    directory: &str,
+    data: Option<&Bytes>,
+    create: bool,
+) -> Result<String, anyhow::Error> {
     let ipfs_string = "ipfs://";
 
     let base_uri = if let Some(stripped) = ipfs_url.strip_prefix(ipfs_string) {
@@ -65,19 +88,37 @@ async fn caching_filename(ipfs_url: &str, directory: &str) -> Result<String, any
     let mut splits = base_uri.split('/').collect::<Vec<&str>>();
     splits.insert(0, directory);
 
-    if base_uri.ends_with('/') {
+    let mut is_directory = base_uri.ends_with('/');
+
+    if !is_directory {
+        if let Some(data) = data {
+            if let Ok(content) = std::str::from_utf8(data) {
+                if content.contains("Index of") {
+                    is_directory = true;
+                }
+            }
+        }
+    }
+
+    if is_directory {
         let cache_dir = splits.join("/");
         let filename = format!("{cache_dir}/index.html");
+        debug!("{base_uri} is a directory, creating {cache_dir}");
 
-        fs::create_dir_all(cache_dir).await?;
+        if create {
+            fs::create_dir_all(cache_dir).await?;
+        }
 
         Ok(filename)
     } else {
         let filename = splits.pop().unwrap();
         let cache_dir = splits.join("/");
         let filename = format!("{cache_dir}/{filename}");
+        debug!("{base_uri} is NOT a directory, creating {cache_dir}");
 
-        fs::create_dir_all(cache_dir).await?;
+        if create {
+            fs::create_dir_all(cache_dir).await?;
+        }
 
         Ok(filename)
     }

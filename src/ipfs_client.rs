@@ -99,10 +99,11 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
             tokio::spawn(async move {
                 let client = reqwest::ClientBuilder::new()
                     .user_agent(&ctx.config.user_agent.clone())
-                    .connect_timeout(std::time::Duration::from_millis(20000))
-                    .timeout(std::time::Duration::from_millis(20000))
+                    .connect_timeout(std::time::Duration::from_millis(ctx.config.connect_timeout))
+                    .timeout(std::time::Duration::from_millis(ctx.config.connect_timeout))
                     .build()?;
-                let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+                let retry_policy =
+                    ExponentialBackoff::builder().build_with_max_retries(ctx.config.max_retries);
                 let client_with_middleware = ClientBuilder::new(client)
                     .with(TracingMiddleware::default())
                     .with(RetryTransientMiddleware::new_with_policy(retry_policy))

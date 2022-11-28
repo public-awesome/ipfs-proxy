@@ -5,6 +5,8 @@ pub struct Settings {
     pub ipfs_gateways: Vec<String>,
     pub ipfs_cache_directory: String,
     pub user_agent: String,
+    pub connect_timeout: u64,
+    pub max_retries: u32,
 }
 
 impl Settings {

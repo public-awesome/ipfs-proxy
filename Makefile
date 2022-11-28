@@ -1,5 +1,6 @@
 setup_dev:
 	sea-orm-cli migrate init
+	cargo install cargo-udeps
 
 migrate:
 	cargo run --bin migrate
