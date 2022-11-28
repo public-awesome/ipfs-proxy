@@ -1,7 +1,6 @@
 ipfs_gateways = [
     # "http://127.0.0.1:8080/ipfs",
     "https://ipfs.io/ipfs",
-    # "https://ipfs.stargaze.zone/ipfs",
     # "https://gateway.ipfs.io/ipfs",
     # "https://dweb.link/ipfs",
     # "https://ipfs.fleek.co/ipfs",
