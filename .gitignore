@@ -1,0 +1,5 @@
+/target
+.envrc
+.vscode
+objects.sqlite
+ipfs

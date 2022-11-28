@@ -1,0 +1,75 @@
+use crate::app_context::AppContext;
+use actix_web::middleware::Logger;
+use actix_web::web::{self, ServiceConfig};
+use actix_web::{
+    body::MessageBody,
+    dev::{Server, ServiceFactory, ServiceRequest, ServiceResponse},
+    middleware::Compress,
+    App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
+};
+use std::net::TcpListener;
+use tracing::info;
+use tracing_actix_web::TracingLogger;
+
+use crate::ipfs_client;
+
+pub fn run(ctx: AppContext, listener: TcpListener) -> anyhow::Result<Server> {
+    let port = listener.local_addr().unwrap().port();
+    let ip = listener.local_addr().unwrap().ip();
+    let ctx = web::Data::new(ctx);
+
+    let server = HttpServer::new(move || make_app().configure(config_app(ctx.clone())))
+        .listen(listener)?
+        .run();
+
+    info!("Listening to http://{ip}:{port}/");
+
+    Ok(server)
+}
+
+fn config_app(app_ctx: web::Data<AppContext>) -> Box<dyn Fn(&mut ServiceConfig)> {
+    Box::new(move |cfg: &mut ServiceConfig| {
+        cfg.service(web::resource("/ipfs/{ipfs_file:.*}").route(web::get().to(ipfs_file)));
+
+        cfg.app_data(app_ctx.clone());
+    })
+}
+
+fn make_app() -> App<
+    impl ServiceFactory<
+        ServiceRequest,
+        Response = ServiceResponse<impl MessageBody>,
+        Config = (),
+        InitError = (),
+        Error = Error,
+    >,
+> {
+    App::new()
+        .wrap(Logger::default())
+        .wrap(TracingLogger::default())
+        .wrap(actix_web_opentelemetry::RequestTracing::new())
+        .wrap(Compress::default())
+}
+
+async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Responder {
+    let ipfs_file = match req.match_info().get("ipfs_file") {
+        Some(ipfs_file) => ipfs_file,
+        None => {
+            let result = HttpResponse::BadRequest().body("Error");
+
+            return result;
+        }
+    };
+
+    let ipfs_file = format!("ipfs://{ipfs_file}");
+
+    match ipfs_client::fetch_ipfs_data(ctx.into_inner(), &ipfs_file).await {
+        Err(error) => HttpResponse::BadRequest().body(format!("Error: {error}")),
+        Ok(data) => HttpResponse::Ok()
+            .content_type(
+                data.content_type
+                    .unwrap_or_else(|| "application/octet-stream".to_string()),
+            )
+            .body(data.bytes.unwrap()),
+    }
+}
