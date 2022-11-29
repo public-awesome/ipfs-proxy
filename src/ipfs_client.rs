@@ -13,13 +13,15 @@ use std::io::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::NamedTempFile;
+use tokio::fs;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
 use crate::app_context::AppContext;
+use crate::caching::caching_filename;
+use crate::caching::get_caching;
 use crate::caching::set_stream_caching;
 use crate::caching::Data;
-use crate::caching::{get_caching, set_caching};
 use entity::ipfs_object::update_entry;
 
 lazy_static! {
@@ -52,6 +54,8 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                         .unwrap_or_default() as i64,
                 )
                 .await?;
+
+                info!("Return cached data");
                 return Ok(cached_data);
             }
         }
@@ -122,37 +126,43 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                             .get(reqwest::header::CONTENT_TYPE)
                             .and_then(|value| value.to_str().ok().map(|t| t.to_string()));
 
-                        let mut tmp_file = NamedTempFile::new()?;
+                        let stream = Box::pin(response.bytes_stream());
+                        return Ok(set_stream_caching(ctx, ipfs_url, content_type, stream).await?);
 
-                        for item in response.bytes_stream().next().await {
-                            match item {
-                                Err(error) => {
-                                    return Err(error.into());
-                                }
-                                Ok(bytes) => {
-                                    tmp_file.write_all(bytes.as_ref())?;
-                                }
-                            }
-                        }
-                        drop(tmp_file);
+                        // let mut tmp_file = NamedTempFile::new()?;
 
-                        // set_stream_caching(ctx.clone(), ipfs_url, response.bytes_stream())?;
+                        // let filename = caching_filename(
+                        //     ipfs_url,
+                        //     &ctx.config.ipfs_cache_directory,
+                        //     None,
+                        //     true,
+                        // )
+                        // .await?;
 
-                        // set_caching(ctx.clone(), ipfs_url, &bytes).await?;
+                        // let mut stream = response.bytes_stream();
 
-                        // let content_size = bytes.len();
+                        // while let Some(bytes) = stream.next().await {
+                        //     match bytes {
+                        //         Err(error) => {
+                        //             return Err(error.into());
+                        //         }
+                        //         Ok(bytes) => {
+                        //             debug!("Reading {} bytes to file {}", bytes.len(), &filename);
+                        //             tmp_file.write_all(bytes.as_ref())?;
+                        //         }
+                        //     }
+                        // }
 
-                        let result = Data {
-                            content_type: content_type.clone(),
-                            bytes: None,
-                            filename: None,
-                        };
+                        // fs::rename(&tmp_file, &filename).await?;
+                        // drop(tmp_file);
 
-                        // let content_type = content_type.unwrap_or_default();
+                        // let result = Data {
+                        //     content_type: content_type.clone(),
+                        //     bytes: None,
+                        //     filename: Some(filename),
+                        // };
 
-                        // update_entry(&ctx.db, ipfs_url, &content_type, content_size as i64).await?;
-
-                        return Ok(result);
+                        // return Ok(result);
                     }
                     reqwest::StatusCode::TOO_MANY_REQUESTS => {
                         if let Some(host) = url.host() {

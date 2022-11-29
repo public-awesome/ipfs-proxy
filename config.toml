@@ -9,7 +9,7 @@ ipfs_gateways = [
     # "https://ipfs.eternum.io/ipfs",
     # "https://cf-ipfs.com/ipfs",
 ]
-ipfs_cache_directory = "../ipfs-data"
+ipfs_cache_directory = "ipfs"
 user_agent = "ipfs-proxy"
 connect_timeout = 20000
 max_retries = 3

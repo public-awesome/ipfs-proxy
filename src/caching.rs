@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::fs;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::AppContext;
 
@@ -45,7 +45,7 @@ pub async fn get_caching(
         let data = Data {
             content_type,
             bytes: Some(bytes.into()),
-            filename: None,
+            filename: Some(filename.to_string()),
         };
 
         return Ok(Some(data));
@@ -75,20 +75,39 @@ pub async fn set_caching(
     Ok(())
 }
 
-pub fn set_stream_caching(
+pub async fn set_stream_caching(
     ctx: Arc<AppContext>,
     ipfs_url: &str,
-    stream: impl futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>>,
-) -> Result<(), anyhow::Error> {
-    // stream.for_each(|item| {
+    content_type: Option<String>,
+    mut stream: Pin<Box<impl futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>>>>,
+) -> Result<Data, anyhow::Error> {
+    let mut tmp_file = NamedTempFile::new()?;
 
-    // });
-    // for data in stream.next() {}
+    let filename = caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, None, true).await?;
 
-    Ok(())
+    while let Some(bytes) = stream.next().await {
+        match bytes {
+            Err(error) => {
+                return Err(error.into());
+            }
+            Ok(bytes) => {
+                debug!("Reading {} bytes to file {}", bytes.len(), &filename);
+                tmp_file.write_all(bytes.as_ref())?;
+            }
+        }
+    }
+
+    fs::rename(&tmp_file, &filename).await?;
+    drop(tmp_file);
+
+    Ok(Data {
+        content_type: content_type,
+        bytes: None,
+        filename: Some(filename),
+    })
 }
 
-async fn caching_filename(
+pub async fn caching_filename(
     ipfs_url: &str,
     directory: &str,
     data: Option<&Bytes>,
@@ -108,9 +127,16 @@ async fn caching_filename(
     let mut is_directory = base_uri.ends_with('/');
 
     if !is_directory {
+        info!("Isn't a directory, checking");
         if let Some(data) = data {
+            info!("Isn't a directory, has data");
+
             if let Ok(content) = std::str::from_utf8(data) {
+                info!("Isn't a directory, has content");
+
                 if content.contains("Index of") {
+                    info!("Isn't a directory, contains index of");
+
                     is_directory = true;
                 }
             }
