@@ -9,12 +9,15 @@ use lazy_static::lazy_static;
 use reqwest_middleware::ClientBuilder;
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use reqwest_tracing::TracingMiddleware;
+use std::io::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
+use tempfile::NamedTempFile;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
 use crate::app_context::AppContext;
+use crate::caching::set_stream_caching;
 use crate::caching::Data;
 use crate::caching::{get_caching, set_caching};
 use entity::ipfs_object::update_entry;
@@ -26,26 +29,7 @@ lazy_static! {
 
 #[tracing::instrument(skip_all)]
 pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Data, anyhow::Error> {
-    let ipfs_string = "ipfs://";
-
-    let base_uri = if let Some(stripped) = ipfs_url.strip_prefix(ipfs_string) {
-        stripped.to_string()
-    } else {
-        return Err(anyhow!("Not an IPFS URL: {ipfs_url}"));
-    };
-
-    let splits = base_uri.split('/').collect::<Vec<&str>>();
-    let first = match splits.first() {
-        Some(first) => first,
-        None => {
-            return Err(anyhow!(
-                "Not an IPFS URL: {ipfs_url}, no CID on first split"
-            ));
-        }
-    };
-
-    // Check if CID is good
-    Cid::try_from(first.to_string()).with_context(|| format!("CID is invalid for {}", ipfs_url))?;
+    let base_uri = check_ipfs_url(ipfs_url)?;
 
     match get_caching(ctx.clone(), ipfs_url).await {
         Err(error) => {
@@ -138,19 +122,35 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                             .get(reqwest::header::CONTENT_TYPE)
                             .and_then(|value| value.to_str().ok().map(|t| t.to_string()));
 
-                        let bytes = response.bytes().await?;
-                        set_caching(ctx.clone(), ipfs_url, &bytes).await?;
+                        let mut tmp_file = NamedTempFile::new()?;
 
-                        let content_size = bytes.len();
+                        for item in response.bytes_stream().next().await {
+                            match item {
+                                Err(error) => {
+                                    return Err(error.into());
+                                }
+                                Ok(bytes) => {
+                                    tmp_file.write_all(bytes.as_ref())?;
+                                }
+                            }
+                        }
+                        drop(tmp_file);
+
+                        // set_stream_caching(ctx.clone(), ipfs_url, response.bytes_stream())?;
+
+                        // set_caching(ctx.clone(), ipfs_url, &bytes).await?;
+
+                        // let content_size = bytes.len();
 
                         let result = Data {
                             content_type: content_type.clone(),
-                            bytes: Some(bytes),
+                            bytes: None,
+                            filename: None,
                         };
 
-                        let content_type = content_type.unwrap_or_default();
+                        // let content_type = content_type.unwrap_or_default();
 
-                        update_entry(&ctx.db, ipfs_url, &content_type, content_size as i64).await?;
+                        // update_entry(&ctx.db, ipfs_url, &content_type, content_size as i64).await?;
 
                         return Ok(result);
                     }
@@ -187,4 +187,30 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
 
     error!("Couldn't fetch any url: {urls:?}");
     Err(anyhow!("Couldn't fetch any url: {urls:?}"))
+}
+
+/// Check if the IPFS urls seems correct, return the base uri
+fn check_ipfs_url(ipfs_url: &str) -> Result<String, anyhow::Error> {
+    let ipfs_string = "ipfs://";
+
+    let base_uri = if let Some(stripped) = ipfs_url.strip_prefix(ipfs_string) {
+        stripped.to_string()
+    } else {
+        return Err(anyhow!("Not an IPFS URL: {ipfs_url}"));
+    };
+
+    let splits = base_uri.split('/').collect::<Vec<&str>>();
+    let first = match splits.first() {
+        Some(first) => first,
+        None => {
+            return Err(anyhow!(
+                "Not an IPFS URL: {ipfs_url}, no CID on first split"
+            ));
+        }
+    };
+
+    // Check if CID is good
+    Cid::try_from(first.to_string()).with_context(|| format!("CID is invalid for {}", ipfs_url))?;
+
+    Ok(base_uri)
 }

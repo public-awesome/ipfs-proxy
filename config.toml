@@ -1,5 +1,6 @@
 ipfs_gateways = [
-    # "http://127.0.0.1:8080/ipfs",
+    "http://127.0.0.1:8080/ipfs",
+		"https://ipfs.stargaze.zone/ipfs",
     "https://ipfs.io/ipfs",
     # "https://gateway.ipfs.io/ipfs",
     # "https://dweb.link/ipfs",
@@ -8,7 +9,7 @@ ipfs_gateways = [
     # "https://ipfs.eternum.io/ipfs",
     # "https://cf-ipfs.com/ipfs",
 ]
-ipfs_cache_directory = "ipfs"
+ipfs_cache_directory = "../ipfs-data"
 user_agent = "ipfs-proxy"
 connect_timeout = 20000
 max_retries = 3

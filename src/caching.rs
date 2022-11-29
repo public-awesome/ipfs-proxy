@@ -1,9 +1,11 @@
 use anyhow::anyhow;
 use async_recursion::async_recursion;
 use bytes::Bytes;
+use futures::StreamExt;
 use sea_orm::entity::prelude::*;
 use std::io::prelude::*;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::fs;
@@ -15,6 +17,7 @@ use crate::AppContext;
 pub struct Data {
     pub content_type: Option<String>,
     pub bytes: Option<Bytes>,
+    pub filename: Option<String>,
 }
 
 #[async_recursion]
@@ -42,6 +45,7 @@ pub async fn get_caching(
         let data = Data {
             content_type,
             bytes: Some(bytes.into()),
+            filename: None,
         };
 
         return Ok(Some(data));
@@ -67,6 +71,19 @@ pub async fn set_caching(
     tmp_file.write_all(data.as_ref())?;
 
     fs::rename(tmp_file, filename).await?;
+
+    Ok(())
+}
+
+pub fn set_stream_caching(
+    ctx: Arc<AppContext>,
+    ipfs_url: &str,
+    stream: impl futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>>,
+) -> Result<(), anyhow::Error> {
+    // stream.for_each(|item| {
+
+    // });
+    // for data in stream.next() {}
 
     Ok(())
 }

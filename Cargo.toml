@@ -15,7 +15,7 @@ actix-web = "4"
 tracing-actix-web = "0.6"
 tracing = { version = "0.1", features = ["log"] }
 tokio = { version = "1", features = ["full", "time"] }
-reqwest = { version = "0.11", features = ["json", "trust-dns"] }
+reqwest = { version = "0.11", features = ["json", "trust-dns", "stream"] }
 reqwest-tracing = "0"
 reqwest-middleware = "0.2"
 reqwest-retry = "0.2"
