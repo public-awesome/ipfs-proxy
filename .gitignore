@@ -4,3 +4,4 @@
 objects.sqlite
 ipfs
 tmp
+config/local.toml

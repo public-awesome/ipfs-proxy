@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use async_recursion::async_recursion;
 use futures::StreamExt;
 use sea_orm::entity::prelude::*;
@@ -10,6 +9,7 @@ use tempfile::NamedTempFile;
 use tokio::fs;
 use tracing::debug;
 
+use crate::ipfs_client::check_ipfs_url;
 use crate::AppContext;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,13 +97,7 @@ pub async fn caching_filename(
     content_type: Option<String>,
     create: bool,
 ) -> Result<String, anyhow::Error> {
-    let ipfs_string = "ipfs://";
-
-    let base_uri = if let Some(stripped) = ipfs_url.strip_prefix(ipfs_string) {
-        stripped.to_string()
-    } else {
-        return Err(anyhow!("Not an IPFS URL: {ipfs_url}"));
-    };
+    let base_uri = check_ipfs_url(ipfs_url)?;
 
     let mut splits = base_uri.split('/').collect::<Vec<&str>>();
     splits.insert(0, directory);
@@ -140,6 +134,27 @@ pub async fn caching_filename(
     }
 
     Ok(filename)
+}
+
+/// Remove caching and parent directories if empty
+pub async fn delete_caching(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<(), anyhow::Error> {
+    let filename =
+        caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, None, false).await?;
+
+    fs::remove_file(&filename).await.ok();
+
+    let mut path = Path::new(&filename).parent();
+
+    while path.is_some() {
+        let dir = path.unwrap();
+        if dir.read_dir()?.next().is_none() {
+            fs::remove_dir(&dir).await.ok();
+        }
+
+        path = dir.parent();
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
