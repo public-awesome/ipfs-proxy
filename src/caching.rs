@@ -124,12 +124,13 @@ pub async fn caching_filename(
     let filename = if is_directory {
         format!("{cache_dir}/index.html")
     } else {
-        let filename = cache_dir.pop().expect("Should have an element");
-        format!("{cache_dir}{filename}")
+        let filename = splits.pop().expect("Should have an element");
+        cache_dir = splits.join("/");
+        format!("{cache_dir}/{filename}")
     };
 
     if create {
-        debug!("creating {cache_dir}");
+        debug!("creating {cache_dir} from {:?}", splits);
         fs::create_dir_all(&cache_dir).await?;
     }
 
@@ -147,8 +148,14 @@ pub async fn delete_caching(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<(), 
 
     while path.is_some() {
         let dir = path.unwrap();
-        if dir.read_dir()?.next().is_none() {
-            fs::remove_dir(&dir).await.ok();
+        match dir.read_dir() {
+            Err(_) => break,
+            Ok(mut files) => {
+                if files.next().is_some() {
+                    break;
+                }
+                fs::remove_dir(&dir).await.ok();
+            }
         }
 
         path = dir.parent();
@@ -159,15 +166,20 @@ pub async fn delete_caching(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
+    use crate::ipfs_client::fetch_ipfs_data;
+
     use super::*;
 
-    async fn delete_dir() {
-        fs::remove_dir_all("tmp/ipfs").await.ok();
+    async fn delete_dir(ctx: Arc<AppContext>) {
+        fs::remove_dir_all(&ctx.config.ipfs_cache_directory)
+            .await
+            .ok();
     }
 
     #[tokio::test]
     async fn filename_for_dir() -> Result<(), anyhow::Error> {
-        delete_dir().await;
+        let ctx = Arc::new(AppContext::build().await);
+        delete_dir(ctx.clone()).await;
 
         let filename = caching_filename(
             "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344",
@@ -192,7 +204,8 @@ mod tests {
 
     #[tokio::test]
     async fn filename_for_subdir() -> Result<(), anyhow::Error> {
-        delete_dir().await;
+        let ctx = Arc::new(AppContext::build().await);
+        delete_dir(ctx.clone()).await;
 
         let filename = caching_filename(
             "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata",
@@ -217,7 +230,8 @@ mod tests {
 
     #[tokio::test]
     async fn filename_for_non_html_file() -> Result<(), anyhow::Error> {
-        delete_dir().await;
+        let ctx = Arc::new(AppContext::build().await);
+        delete_dir(ctx.clone()).await;
 
         let filename = caching_filename(
             "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/3",
@@ -242,7 +256,8 @@ mod tests {
 
     #[tokio::test]
     async fn filename_for_html_file_without_extension() -> Result<(), anyhow::Error> {
-        delete_dir().await;
+        let ctx = Arc::new(AppContext::build().await);
+        delete_dir(ctx.clone()).await;
 
         let filename = caching_filename(
             "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/4",
@@ -267,7 +282,8 @@ mod tests {
 
     #[tokio::test]
     async fn filename_for_html_file_with_extension() -> Result<(), anyhow::Error> {
-        delete_dir().await;
+        let ctx = Arc::new(AppContext::build().await);
+        delete_dir(ctx.clone()).await;
 
         let filename = caching_filename(
             "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/5.html",
@@ -286,6 +302,42 @@ mod tests {
             "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/"
         )
         .is_dir());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_caching_one_file() -> Result<(), anyhow::Error> {
+        let ctx = Arc::new(AppContext::build().await);
+
+        delete_dir(ctx.clone()).await;
+
+        let ipfs_url =
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/81";
+
+        fetch_ipfs_data(ctx.clone(), ipfs_url).await?;
+
+        super::delete_caching(ctx, ipfs_url).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_caching_multiple_files() -> Result<(), anyhow::Error> {
+        let ctx = Arc::new(AppContext::build().await);
+
+        delete_dir(ctx.clone()).await;
+
+        let ipfs_url =
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/81";
+
+        fetch_ipfs_data(ctx.clone(), ipfs_url).await?;
+        let ipfs_url =
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/82";
+
+        fetch_ipfs_data(ctx.clone(), ipfs_url).await?;
+
+        super::delete_caching(ctx, ipfs_url).await?;
 
         Ok(())
     }
