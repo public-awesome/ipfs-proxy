@@ -1682,6 +1682,7 @@ dependencies = [
  "lazy_static",
  "migration",
  "mime",
+ "mime_guess",
  "opentelemetry",
  "reqwest",
  "reqwest-middleware",

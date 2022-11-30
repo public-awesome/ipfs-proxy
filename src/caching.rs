@@ -16,7 +16,6 @@ use crate::AppContext;
 #[derive(Clone, Debug)]
 pub struct Data {
     pub content_type: Option<String>,
-    pub bytes: Option<Bytes>,
     pub filename: Option<String>,
 }
 
@@ -25,8 +24,14 @@ pub async fn get_caching(
     ctx: Arc<AppContext>,
     ipfs_url: &str,
 ) -> Result<Option<Data>, anyhow::Error> {
-    let filename =
-        caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, None, false).await?;
+    let filename = caching_filename(
+        ipfs_url,
+        &ctx.config.ipfs_cache_directory,
+        None,
+        None,
+        false,
+    )
+    .await?;
     let filename = filename.as_str();
 
     debug!("Looking for {filename}");
@@ -44,7 +49,6 @@ pub async fn get_caching(
 
         let data = Data {
             content_type,
-            bytes: Some(bytes.into()),
             filename: Some(filename.to_string()),
         };
 
@@ -58,33 +62,22 @@ pub async fn get_caching(
     Ok(None)
 }
 
-pub async fn set_caching(
-    ctx: Arc<AppContext>,
-    ipfs_url: &str,
-    data: &Bytes,
-) -> Result<(), anyhow::Error> {
-    let filename =
-        caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, Some(data), true).await?;
-    let filename = filename.as_str();
-
-    let mut tmp_file = NamedTempFile::new()?;
-    tmp_file.write_all(data.as_ref())?;
-
-    fs::rename(tmp_file, filename).await?;
-
-    Ok(())
-}
-
 pub async fn set_stream_caching(
     ctx: Arc<AppContext>,
     ipfs_url: &str,
     content_type: Option<String>,
     mut stream: Pin<Box<impl futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>>>>,
 ) -> Result<Data, anyhow::Error> {
+    let filename = caching_filename(
+        ipfs_url,
+        &ctx.config.ipfs_cache_directory,
+        None,
+        content_type.clone(),
+        true,
+    )
+    .await?;
+
     let mut tmp_file = NamedTempFile::new()?;
-
-    let filename = caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, None, true).await?;
-
     while let Some(bytes) = stream.next().await {
         match bytes {
             Err(error) => {
@@ -101,8 +94,7 @@ pub async fn set_stream_caching(
     drop(tmp_file);
 
     Ok(Data {
-        content_type: content_type,
-        bytes: None,
+        content_type,
         filename: Some(filename),
     })
 }
@@ -111,6 +103,7 @@ pub async fn caching_filename(
     ipfs_url: &str,
     directory: &str,
     data: Option<&Bytes>,
+    content_type: Option<String>,
     create: bool,
 ) -> Result<String, anyhow::Error> {
     let ipfs_string = "ipfs://";
@@ -124,22 +117,38 @@ pub async fn caching_filename(
     let mut splits = base_uri.split('/').collect::<Vec<&str>>();
     splits.insert(0, directory);
 
+    // If url ends with `/` we know it's a directory
     let mut is_directory = base_uri.ends_with('/');
 
     if !is_directory {
-        info!("Isn't a directory, checking");
-        if let Some(data) = data {
-            info!("Isn't a directory, has data");
+        if let Some(content_type) = content_type {
+            if content_type == "text/html" {
+                // info!("Isn't a directory, but is html");
 
-            if let Ok(content) = std::str::from_utf8(data) {
-                info!("Isn't a directory, has content");
-
-                if content.contains("Index of") {
-                    info!("Isn't a directory, contains index of");
-
-                    is_directory = true;
+                // If the file has no extension and is HTML, we know it's a directory
+                if let Some(filename) = splits.last() {
+                    let mimes = mime_guess::from_path(filename);
+                    if mimes.is_empty() {
+                        is_directory = true;
+                    }
+                    // if mimes
+                    //     .into_iter()
+                    //     .map(|m| m)
+                    //     .collect::<Vec<Mime>>()
+                    //     .contains(&mime::TEXT_HTML)
+                    // {
+                    //     is_directory = true;
+                    // }
                 }
             }
+            // } else if let Some(data) = data {
+            //     if let Ok(content) = std::str::from_utf8(data) {
+            //         if content.contains("Index of") {
+            //             info!("Isn't a directory, contains index of");
+
+            //             is_directory = true;
+            //         }
+            //     }
         }
     }
 

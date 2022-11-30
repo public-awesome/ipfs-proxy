@@ -9,16 +9,13 @@ use lazy_static::lazy_static;
 use reqwest_middleware::ClientBuilder;
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use reqwest_tracing::TracingMiddleware;
-use std::io::prelude::*;
+use std::fs;
 use std::sync::Arc;
 use std::time::Instant;
-use tempfile::NamedTempFile;
-use tokio::fs;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
 use crate::app_context::AppContext;
-use crate::caching::caching_filename;
 use crate::caching::get_caching;
 use crate::caching::set_stream_caching;
 use crate::caching::Data;
@@ -39,6 +36,18 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
         }
         Ok(cached_data) => {
             if let Some(cached_data) = cached_data {
+                // let content_length = cached_data
+                //     .filename
+                //     .as_ref()
+                //     .map(|f| fs::metadata(f).and_then(|t| Ok(t.len())).ok())
+                //     .flatten()
+                //     .unwrap_or_default();
+
+                let content_length = cached_data
+                    .filename
+                    .as_ref()
+                    .and_then(|f| fs::metadata(f).map(|t| t.len()).ok())
+                    .unwrap_or_default();
                 update_entry(
                     &ctx.db,
                     ipfs_url,
@@ -47,11 +56,7 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                         .as_ref()
                         .map(|ct| ct.to_owned())
                         .unwrap_or_default(),
-                    cached_data
-                        .bytes
-                        .as_ref()
-                        .map(|b| b.len())
-                        .unwrap_or_default() as i64,
+                    content_length as i64,
                 )
                 .await?;
 
@@ -127,42 +132,7 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                             .and_then(|value| value.to_str().ok().map(|t| t.to_string()));
 
                         let stream = Box::pin(response.bytes_stream());
-                        return Ok(set_stream_caching(ctx, ipfs_url, content_type, stream).await?);
-
-                        // let mut tmp_file = NamedTempFile::new()?;
-
-                        // let filename = caching_filename(
-                        //     ipfs_url,
-                        //     &ctx.config.ipfs_cache_directory,
-                        //     None,
-                        //     true,
-                        // )
-                        // .await?;
-
-                        // let mut stream = response.bytes_stream();
-
-                        // while let Some(bytes) = stream.next().await {
-                        //     match bytes {
-                        //         Err(error) => {
-                        //             return Err(error.into());
-                        //         }
-                        //         Ok(bytes) => {
-                        //             debug!("Reading {} bytes to file {}", bytes.len(), &filename);
-                        //             tmp_file.write_all(bytes.as_ref())?;
-                        //         }
-                        //     }
-                        // }
-
-                        // fs::rename(&tmp_file, &filename).await?;
-                        // drop(tmp_file);
-
-                        // let result = Data {
-                        //     content_type: content_type.clone(),
-                        //     bytes: None,
-                        //     filename: Some(filename),
-                        // };
-
-                        // return Ok(result);
+                        return set_stream_caching(ctx, ipfs_url, content_type, stream).await;
                     }
                     reqwest::StatusCode::TOO_MANY_REQUESTS => {
                         if let Some(host) = url.host() {
@@ -200,7 +170,7 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
 }
 
 /// Check if the IPFS urls seems correct, return the base uri
-fn check_ipfs_url(ipfs_url: &str) -> Result<String, anyhow::Error> {
+pub fn check_ipfs_url(ipfs_url: &str) -> Result<String, anyhow::Error> {
     let ipfs_string = "ipfs://";
 
     let base_uri = if let Some(stripped) = ipfs_url.strip_prefix(ipfs_string) {

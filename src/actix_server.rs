@@ -7,10 +7,9 @@ use actix_web::{
     middleware::Compress,
     App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
-use std::net::TcpListener;
-// use tokio::util::{BytesCodec, FramedRead};
 use mime;
-use tracing::info;
+use std::net::TcpListener;
+use tracing::{debug, info};
 use tracing_actix_web::TracingLogger;
 
 use crate::ipfs_client;
@@ -76,8 +75,9 @@ async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Respond
                 Some(filename) => {
                     let mime_type = content_type
                         .parse()
-                        .unwrap_or_else(|_| mime::APPLICATION_OCTET_STREAM);
-                    info!("Streaming data {} from {}", &content_type, &filename);
+                        .unwrap_or(mime::APPLICATION_OCTET_STREAM);
+
+                    debug!("Streaming data {} from {}", &content_type, &filename);
                     let file = actix_files::NamedFile::open_async(filename)
                         .await
                         .unwrap()
@@ -85,9 +85,7 @@ async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Respond
                         .disable_content_disposition();
                     file.into_response(&req)
                 }
-                None => HttpResponse::Ok()
-                    .content_type(content_type)
-                    .body(data.bytes.unwrap()),
+                None => HttpResponse::BadRequest().body("Error, no data.".to_string()),
             }
         }
     }
