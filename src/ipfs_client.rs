@@ -36,13 +36,6 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
         }
         Ok(cached_data) => {
             if let Some(cached_data) = cached_data {
-                // let content_length = cached_data
-                //     .filename
-                //     .as_ref()
-                //     .map(|f| fs::metadata(f).and_then(|t| Ok(t.len())).ok())
-                //     .flatten()
-                //     .unwrap_or_default();
-
                 let content_length = cached_data
                     .filename
                     .as_ref()
@@ -60,7 +53,7 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                 )
                 .await?;
 
-                info!("Return cached data");
+                debug!("Return cached data");
                 return Ok(cached_data);
             }
         }
