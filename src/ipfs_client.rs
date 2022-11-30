@@ -61,7 +61,6 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
 
     // We stop using gateways who gave us a 429 too many requests
     let blocked_gateways = BLOCKED_GATEWAYS.lock().await;
-    let blocked_minutes = 2;
 
     let urls: Vec<String> = ctx
         .config
@@ -71,7 +70,7 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
             None => true,
             Some(utc_time) => {
                 let diff = Utc::now() - *utc_time;
-                diff.num_minutes() >= blocked_minutes
+                diff.num_seconds() >= ctx.config.pause_gateway_seconds
             }
         })
         .map(|ipfs_gateway| format!("{}/{}", ipfs_gateway, base_uri))
@@ -125,7 +124,23 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                             .and_then(|value| value.to_str().ok().map(|t| t.to_string()));
 
                         let stream = Box::pin(response.bytes_stream());
-                        return set_stream_caching(ctx, ipfs_url, content_type, stream).await;
+                        let result =
+                            set_stream_caching(ctx.clone(), ipfs_url, content_type, stream).await?;
+                        let content_length = result
+                            .filename
+                            .as_ref()
+                            .and_then(|f| fs::metadata(f).map(|t| t.len()).ok())
+                            .unwrap_or_default();
+
+                        update_entry(
+                            &ctx.db,
+                            ipfs_url,
+                            &result.content_type.clone().unwrap_or_default(),
+                            content_length as i64,
+                        )
+                        .await?;
+
+                        return Ok(result);
                     }
                     reqwest::StatusCode::TOO_MANY_REQUESTS => {
                         if let Some(host) = url.host() {
@@ -186,4 +201,43 @@ pub fn check_ipfs_url(ipfs_url: &str) -> Result<String, anyhow::Error> {
     Cid::try_from(first.to_string()).with_context(|| format!("CID is invalid for {}", ipfs_url))?;
 
     Ok(base_uri)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::entity::prelude::*;
+
+    #[tokio::test]
+    async fn fetch_json() -> Result<(), anyhow::Error> {
+        let ctx = Arc::new(AppContext::build().await);
+        let remote_url =
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1";
+        let result = fetch_ipfs_data(ctx.clone(), remote_url).await?;
+
+        let ipfs_object = entity::ipfs_object::Entity::find()
+            .filter(entity::ipfs_object::Column::RemoteUrl.eq(remote_url))
+            .one(&ctx.db)
+            .await?
+            .expect("Can't find ipfs object");
+        assert_eq!(ipfs_object.content_type, "application/json");
+
+        let expected = Data {
+            content_type: Some("application/json".to_string()),
+            filename: Some(
+                "ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1"
+                    .to_string(),
+            ),
+        };
+        assert_eq!(result, expected);
+
+        let result = fetch_ipfs_data(
+            ctx,
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1",
+        )
+        .await?;
+        assert_eq!(result, expected);
+
+        Ok(())
+    }
 }

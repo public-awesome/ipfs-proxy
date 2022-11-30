@@ -12,7 +12,7 @@ use tracing::debug;
 
 use crate::AppContext;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Data {
     pub content_type: Option<String>,
     pub filename: Option<String>,

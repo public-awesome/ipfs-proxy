@@ -81,8 +81,8 @@ async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Respond
                     let file = actix_files::NamedFile::open_async(filename)
                         .await
                         .unwrap()
-                        .set_content_type(mime_type)
-                        .disable_content_disposition();
+                        .disable_content_disposition()
+                        .set_content_type(mime_type);
                     file.into_response(&req)
                 }
                 None => HttpResponse::BadRequest().body("Error, no data.".to_string()),

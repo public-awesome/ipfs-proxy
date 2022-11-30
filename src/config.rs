@@ -7,6 +7,7 @@ pub struct Settings {
     pub user_agent: String,
     pub connect_timeout: u64,
     pub max_retries: u32,
+    pub pause_gateway_seconds: i64,
 }
 
 impl Settings {
