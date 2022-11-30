@@ -1,6 +1,5 @@
 use anyhow::anyhow;
 use async_recursion::async_recursion;
-use bytes::Bytes;
 use futures::StreamExt;
 use sea_orm::entity::prelude::*;
 use std::io::prelude::*;
@@ -9,7 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::fs;
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::AppContext;
 
@@ -24,14 +23,8 @@ pub async fn get_caching(
     ctx: Arc<AppContext>,
     ipfs_url: &str,
 ) -> Result<Option<Data>, anyhow::Error> {
-    let filename = caching_filename(
-        ipfs_url,
-        &ctx.config.ipfs_cache_directory,
-        None,
-        None,
-        false,
-    )
-    .await?;
+    let filename =
+        caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, None, false).await?;
     let filename = filename.as_str();
 
     debug!("Looking for {filename}");
@@ -71,7 +64,6 @@ pub async fn set_stream_caching(
     let filename = caching_filename(
         ipfs_url,
         &ctx.config.ipfs_cache_directory,
-        None,
         content_type.clone(),
         true,
     )
@@ -102,7 +94,6 @@ pub async fn set_stream_caching(
 pub async fn caching_filename(
     ipfs_url: &str,
     directory: &str,
-    data: Option<&Bytes>,
     content_type: Option<String>,
     create: bool,
 ) -> Result<String, anyhow::Error> {
@@ -123,55 +114,164 @@ pub async fn caching_filename(
     if !is_directory {
         if let Some(content_type) = content_type {
             if content_type == "text/html" {
-                // info!("Isn't a directory, but is html");
-
-                // If the file has no extension and is HTML, we know it's a directory
+                // If the file has no extension and is HTML, we know it's a directory listing
                 if let Some(filename) = splits.last() {
                     let mimes = mime_guess::from_path(filename);
                     if mimes.is_empty() {
                         is_directory = true;
                     }
-                    // if mimes
-                    //     .into_iter()
-                    //     .map(|m| m)
-                    //     .collect::<Vec<Mime>>()
-                    //     .contains(&mime::TEXT_HTML)
-                    // {
-                    //     is_directory = true;
-                    // }
                 }
             }
-            // } else if let Some(data) = data {
-            //     if let Ok(content) = std::str::from_utf8(data) {
-            //         if content.contains("Index of") {
-            //             info!("Isn't a directory, contains index of");
-
-            //             is_directory = true;
-            //         }
-            //     }
         }
     }
 
-    if is_directory {
-        let cache_dir = splits.join("/");
-        let filename = format!("{cache_dir}/index.html");
-        debug!("{base_uri} is a directory, creating {cache_dir}");
+    let mut cache_dir = splits.join("/");
 
-        if create {
-            fs::create_dir_all(cache_dir).await?;
-        }
-
-        Ok(filename)
+    let filename = if is_directory {
+        format!("{cache_dir}/index.html")
     } else {
-        let filename = splits.pop().unwrap();
-        let cache_dir = splits.join("/");
-        let filename = format!("{cache_dir}/{filename}");
-        debug!("{base_uri} is NOT a directory, creating {cache_dir}");
+        let filename = cache_dir.pop().expect("Should have an element");
+        format!("{cache_dir}{filename}")
+    };
 
-        if create {
-            fs::create_dir_all(cache_dir).await?;
-        }
+    if create {
+        debug!("creating {cache_dir}");
+        fs::create_dir_all(&cache_dir).await?;
+    }
 
-        Ok(filename)
+    Ok(filename)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn delete_dir() {
+        fs::remove_dir_all("tmp/ipfs").await.ok();
+    }
+
+    #[tokio::test]
+    async fn filename_for_dir() -> Result<(), anyhow::Error> {
+        delete_dir().await;
+
+        let filename = caching_filename(
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344",
+            "tmp/ipfs",
+            Some("text/html".to_string()),
+            true,
+        )
+        .await?;
+
+        assert_eq!(
+            filename,
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/index.html"
+        );
+
+        assert!(
+            Path::new("tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344")
+                .is_dir()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn filename_for_subdir() -> Result<(), anyhow::Error> {
+        delete_dir().await;
+
+        let filename = caching_filename(
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata",
+            "tmp/ipfs",
+            Some("text/html".to_string()),
+            true,
+        )
+        .await?;
+
+        assert_eq!(
+            filename,
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/index.html"
+        );
+
+        assert!(Path::new(
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata"
+        )
+        .is_dir());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn filename_for_non_html_file() -> Result<(), anyhow::Error> {
+        delete_dir().await;
+
+        let filename = caching_filename(
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/3",
+            "tmp/ipfs",
+            Some("application/json".to_string()),
+            true,
+        )
+        .await?;
+
+        assert_eq!(
+            filename,
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/3"
+        );
+
+        assert!(Path::new(
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata"
+        )
+        .is_dir());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn filename_for_html_file_without_extension() -> Result<(), anyhow::Error> {
+        delete_dir().await;
+
+        let filename = caching_filename(
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/4",
+            "tmp/ipfs",
+            Some("text/html".to_string()),
+            true,
+        )
+        .await?;
+
+        assert_eq!(
+            filename,
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/4/index.html"
+        );
+
+        assert!(Path::new(
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/4"
+        )
+        .is_dir());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn filename_for_html_file_with_extension() -> Result<(), anyhow::Error> {
+        delete_dir().await;
+
+        let filename = caching_filename(
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/5.html",
+            "tmp/ipfs",
+            Some("text/html".to_string()),
+            true,
+        )
+        .await?;
+
+        assert_eq!(
+            filename,
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/5.html"
+        );
+
+        assert!(Path::new(
+            "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/"
+        )
+        .is_dir());
+
+        Ok(())
     }
 }
