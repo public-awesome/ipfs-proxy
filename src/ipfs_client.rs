@@ -7,6 +7,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use lazy_static::lazy_static;
 use reqwest_middleware::ClientBuilder;
+#[allow(unused_imports)]
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use reqwest_tracing::TracingMiddleware;
 use std::fs;
@@ -41,17 +42,16 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                     .as_ref()
                     .and_then(|f| fs::metadata(f).map(|t| t.len()).ok())
                     .unwrap_or_default();
-                update_entry(
-                    &ctx.db,
-                    ipfs_url,
-                    &cached_data
-                        .content_type
-                        .as_ref()
-                        .map(|ct| ct.to_owned())
-                        .unwrap_or_default(),
-                    content_length as i64,
-                )
-                .await?;
+                let content_type = cached_data.content_type.clone().unwrap_or_default();
+                let ipfs_url = ipfs_url.to_string();
+
+                tokio::spawn(async move {
+                    if let Err(error) =
+                        update_entry(&ctx.db, &ipfs_url, &content_type, content_length as i64).await
+                    {
+                        error!("Error updating sqlite: {}", error);
+                    }
+                });
 
                 debug!("Return cached data");
                 return Ok(cached_data);
@@ -87,11 +87,11 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                     .connect_timeout(std::time::Duration::from_millis(ctx.config.connect_timeout))
                     .timeout(std::time::Duration::from_millis(ctx.config.connect_timeout))
                     .build()?;
-                let retry_policy =
-                    ExponentialBackoff::builder().build_with_max_retries(ctx.config.max_retries);
+                // let retry_policy =
+                //     ExponentialBackoff::builder().build_with_max_retries(ctx.config.max_retries);
                 let client_with_middleware = ClientBuilder::new(client)
                     .with(TracingMiddleware::default())
-                    .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+                    // .with(RetryTransientMiddleware::new_with_policy(retry_policy))
                     .build();
 
                 client_with_middleware.get(url).send().await
