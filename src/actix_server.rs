@@ -7,8 +7,9 @@ use actix_web::{
     middleware::Compress,
     App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
+use mime;
 use std::net::TcpListener;
-use tracing::info;
+use tracing::{debug, info};
 use tracing_actix_web::TracingLogger;
 
 use crate::ipfs_client;
@@ -65,11 +66,27 @@ async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Respond
 
     match ipfs_client::fetch_ipfs_data(ctx.into_inner(), &ipfs_file).await {
         Err(error) => HttpResponse::BadRequest().body(format!("Error: {error}")),
-        Ok(data) => HttpResponse::Ok()
-            .content_type(
-                data.content_type
-                    .unwrap_or_else(|| "application/octet-stream".to_string()),
-            )
-            .body(data.bytes.unwrap()),
+        Ok(data) => {
+            let content_type = data
+                .content_type
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+
+            match data.filename {
+                Some(filename) => {
+                    let mime_type = content_type
+                        .parse()
+                        .unwrap_or(mime::APPLICATION_OCTET_STREAM);
+
+                    debug!("Streaming data {} from {}", &content_type, &filename);
+                    let file = actix_files::NamedFile::open_async(filename)
+                        .await
+                        .unwrap()
+                        .disable_content_disposition()
+                        .set_content_type(mime_type);
+                    file.into_response(&req)
+                }
+                None => HttpResponse::BadRequest().body("Error, no data.".to_string()),
+            }
+        }
     }
 }

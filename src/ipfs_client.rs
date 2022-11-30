@@ -9,14 +9,16 @@ use lazy_static::lazy_static;
 use reqwest_middleware::ClientBuilder;
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use reqwest_tracing::TracingMiddleware;
+use std::fs;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
 use crate::app_context::AppContext;
+use crate::caching::get_caching;
+use crate::caching::set_stream_caching;
 use crate::caching::Data;
-use crate::caching::{get_caching, set_caching};
 use entity::ipfs_object::update_entry;
 
 lazy_static! {
@@ -26,26 +28,7 @@ lazy_static! {
 
 #[tracing::instrument(skip_all)]
 pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Data, anyhow::Error> {
-    let ipfs_string = "ipfs://";
-
-    let base_uri = if let Some(stripped) = ipfs_url.strip_prefix(ipfs_string) {
-        stripped.to_string()
-    } else {
-        return Err(anyhow!("Not an IPFS URL: {ipfs_url}"));
-    };
-
-    let splits = base_uri.split('/').collect::<Vec<&str>>();
-    let first = match splits.first() {
-        Some(first) => first,
-        None => {
-            return Err(anyhow!(
-                "Not an IPFS URL: {ipfs_url}, no CID on first split"
-            ));
-        }
-    };
-
-    // Check if CID is good
-    Cid::try_from(first.to_string()).with_context(|| format!("CID is invalid for {}", ipfs_url))?;
+    let base_uri = check_ipfs_url(ipfs_url)?;
 
     match get_caching(ctx.clone(), ipfs_url).await {
         Err(error) => {
@@ -53,6 +36,11 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
         }
         Ok(cached_data) => {
             if let Some(cached_data) = cached_data {
+                let content_length = cached_data
+                    .filename
+                    .as_ref()
+                    .and_then(|f| fs::metadata(f).map(|t| t.len()).ok())
+                    .unwrap_or_default();
                 update_entry(
                     &ctx.db,
                     ipfs_url,
@@ -61,13 +49,11 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                         .as_ref()
                         .map(|ct| ct.to_owned())
                         .unwrap_or_default(),
-                    cached_data
-                        .bytes
-                        .as_ref()
-                        .map(|b| b.len())
-                        .unwrap_or_default() as i64,
+                    content_length as i64,
                 )
                 .await?;
+
+                debug!("Return cached data");
                 return Ok(cached_data);
             }
         }
@@ -75,7 +61,6 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
 
     // We stop using gateways who gave us a 429 too many requests
     let blocked_gateways = BLOCKED_GATEWAYS.lock().await;
-    let blocked_minutes = 2;
 
     let urls: Vec<String> = ctx
         .config
@@ -85,7 +70,7 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
             None => true,
             Some(utc_time) => {
                 let diff = Utc::now() - *utc_time;
-                diff.num_minutes() >= blocked_minutes
+                diff.num_seconds() >= ctx.config.pause_gateway_seconds
             }
         })
         .map(|ipfs_gateway| format!("{}/{}", ipfs_gateway, base_uri))
@@ -138,19 +123,22 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                             .get(reqwest::header::CONTENT_TYPE)
                             .and_then(|value| value.to_str().ok().map(|t| t.to_string()));
 
-                        let bytes = response.bytes().await?;
-                        set_caching(ctx.clone(), ipfs_url, &bytes).await?;
+                        let stream = Box::pin(response.bytes_stream());
+                        let result =
+                            set_stream_caching(ctx.clone(), ipfs_url, content_type, stream).await?;
+                        let content_length = result
+                            .filename
+                            .as_ref()
+                            .and_then(|f| fs::metadata(f).map(|t| t.len()).ok())
+                            .unwrap_or_default();
 
-                        let content_size = bytes.len();
-
-                        let result = Data {
-                            content_type: content_type.clone(),
-                            bytes: Some(bytes),
-                        };
-
-                        let content_type = content_type.unwrap_or_default();
-
-                        update_entry(&ctx.db, ipfs_url, &content_type, content_size as i64).await?;
+                        update_entry(
+                            &ctx.db,
+                            ipfs_url,
+                            &result.content_type.clone().unwrap_or_default(),
+                            content_length as i64,
+                        )
+                        .await?;
 
                         return Ok(result);
                     }
@@ -187,4 +175,69 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
 
     error!("Couldn't fetch any url: {urls:?}");
     Err(anyhow!("Couldn't fetch any url: {urls:?}"))
+}
+
+/// Check if the IPFS urls seems correct, return the base uri
+pub fn check_ipfs_url(ipfs_url: &str) -> Result<String, anyhow::Error> {
+    let ipfs_string = "ipfs://";
+
+    let base_uri = if let Some(stripped) = ipfs_url.strip_prefix(ipfs_string) {
+        stripped.to_string()
+    } else {
+        return Err(anyhow!("Not an IPFS URL: {ipfs_url}"));
+    };
+
+    let splits = base_uri.split('/').collect::<Vec<&str>>();
+    let first = match splits.first() {
+        Some(first) => first,
+        None => {
+            return Err(anyhow!(
+                "Not an IPFS URL: {ipfs_url}, no CID on first split"
+            ));
+        }
+    };
+
+    // Check if CID is good
+    Cid::try_from(first.to_string()).with_context(|| format!("CID is invalid for {}", ipfs_url))?;
+
+    Ok(base_uri)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::entity::prelude::*;
+
+    #[tokio::test]
+    async fn fetch_json() -> Result<(), anyhow::Error> {
+        let ctx = Arc::new(AppContext::build().await);
+        let remote_url =
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1";
+        let result = fetch_ipfs_data(ctx.clone(), remote_url).await?;
+
+        let ipfs_object = entity::ipfs_object::Entity::find()
+            .filter(entity::ipfs_object::Column::RemoteUrl.eq(remote_url))
+            .one(&ctx.db)
+            .await?
+            .expect("Can't find ipfs object");
+        assert_eq!(ipfs_object.content_type, "application/json");
+
+        let expected = Data {
+            content_type: Some("application/json".to_string()),
+            filename: Some(
+                "ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1"
+                    .to_string(),
+            ),
+        };
+        assert_eq!(result, expected);
+
+        let result = fetch_ipfs_data(
+            ctx,
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1",
+        )
+        .await?;
+        assert_eq!(result, expected);
+
+        Ok(())
+    }
 }
