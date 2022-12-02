@@ -9,6 +9,7 @@ pub struct Settings {
     pub max_retries: u32,
     pub pause_gateway_seconds: i64,
     pub delete_after_days: i64,
+    pub max_content_length: u64,
 }
 
 impl Settings {
