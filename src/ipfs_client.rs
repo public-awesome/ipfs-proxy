@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
 use crate::app_context::AppContext;
+use crate::caching::delete_caching;
 use crate::caching::get_caching;
 use crate::caching::set_stream_caching;
 use crate::caching::Data;
@@ -112,6 +113,16 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                 // Some IPFS gateway returns 404 because they don't have the data in cache.
                 match status {
                     reqwest::StatusCode::OK => {
+                        if let Some(content_length) = response.content_length() {
+                            if content_length > ctx.config.max_content_length {
+                                return Err(anyhow!(
+                                    "File is {} bytes, maximum allowed is {}",
+                                    content_length,
+                                    ctx.config.max_content_length
+                                ));
+                            }
+                        }
+
                         info!(
                             "[{}] [{:.3?}] fetched {url}",
                             status.as_u16(),
@@ -126,11 +137,21 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                         let stream = Box::pin(response.bytes_stream());
                         let result =
                             set_stream_caching(ctx.clone(), ipfs_url, content_type, stream).await?;
+
                         let content_length = result
                             .filename
                             .as_ref()
                             .and_then(|f| fs::metadata(f).map(|t| t.len()).ok())
                             .unwrap_or_default();
+
+                        if content_length > ctx.config.max_content_length {
+                            delete_caching(ctx.clone(), ipfs_url).await?;
+                            return Err(anyhow!(
+                                "File is {} bytes, maximum allowed is {}. Fetched and deleting cached file.",
+                                content_length,
+                                ctx.config.max_content_length
+                            ));
+                        }
 
                         update_entry(
                             &ctx.db,
@@ -225,7 +246,7 @@ mod tests {
         let expected = Data {
             content_type: Some("application/json".to_string()),
             filename: Some(
-                "ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1"
+                "tmp/ipfs/bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1"
                     .to_string(),
             ),
         };
@@ -239,5 +260,22 @@ mod tests {
         assert_eq!(result, expected);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_large_file() {
+        let mut ctx = AppContext::build().await;
+        ctx.config.max_content_length = 1;
+        let ctx = Arc::new(ctx);
+
+        let remote_url =
+            "ipfs://bafybeicugp6ayh2wh3j2dwb2bhesmxmo2husbbs5prla4wj6rf3ivg3344/metadata/1";
+
+        let result = fetch_ipfs_data(ctx.clone(), remote_url).await;
+
+        assert_eq!(
+            result.err().expect("Expected error").to_string(),
+            "File is 1023 bytes, maximum allowed is 1"
+        );
     }
 }
