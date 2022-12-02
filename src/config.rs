@@ -10,6 +10,7 @@ pub struct Settings {
     pub pause_gateway_seconds: i64,
     pub delete_after_days: i64,
     pub max_content_length: u64,
+    pub server_port: u16,
 }
 
 impl Settings {

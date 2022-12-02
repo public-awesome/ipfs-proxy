@@ -12,11 +12,7 @@ pub async fn main() -> Result<(), anyhow::Error> {
     let ctx = AppContext::build().await;
 
     let ip = "0.0.0.0";
-    let port = std::env::var("PORT")
-        .ok()
-        .map(|val| val.parse::<u16>())
-        .unwrap_or(Ok(3490))
-        .expect("Can't parse port");
+    let port = ctx.config.server_port;
     let listener = TcpListener::bind(format!("{ip}:{port}"))
         .unwrap_or_else(|_| panic!("Failed to bind port {port}"));
 

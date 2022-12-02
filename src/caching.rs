@@ -5,7 +5,7 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use tempfile::NamedTempFile;
+use tempfile::Builder;
 use tokio::fs;
 use tracing::debug;
 
@@ -69,7 +69,10 @@ pub async fn set_stream_caching(
     )
     .await?;
 
-    let mut tmp_file = NamedTempFile::new()?;
+    let mut tmp_file = Builder::new()
+        .prefix(&format!("{}/", &ctx.config.ipfs_cache_directory))
+        .tempfile()?;
+
     while let Some(bytes) = stream.next().await {
         match bytes {
             Err(error) => {
