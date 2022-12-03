@@ -7,7 +7,7 @@ ipfs_gateways = [
   # "https://ipfs.eternum.io/ipfs",
   # "https://cf-ipfs.com/ipfs",
 ]
-ipfs_cache_directory = "/Users/penso/stargaze/ipfs-proxy/ipfs"
+ipfs_cache_directory = "ipfs"
 user_agent = "ipfs-proxy https://github.com/penso/ipfs-proxy"
 connect_timeout = 20000
 pause_gateway_seconds = 120
