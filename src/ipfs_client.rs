@@ -120,12 +120,6 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                             }
                         }
 
-                        info!(
-                            "[{}] [{:.3?}] fetched {url}",
-                            status.as_u16(),
-                            now.elapsed(),
-                        );
-
                         let content_type = response
                             .headers()
                             .get(reqwest::header::CONTENT_TYPE)
@@ -149,6 +143,14 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                                 ctx.config.max_content_length
                             ));
                         }
+
+                        info!(
+                            "[{}] [{:.3?}] Fetched {} from {}",
+                            status.as_u16(),
+                            now.elapsed(),
+                            &ipfs_url,
+                            &url,
+                        );
 
                         update_entry(
                             &ctx.db,
