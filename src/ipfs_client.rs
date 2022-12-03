@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
-use urlencoding::encode;
 
 use crate::app_context::AppContext;
 use crate::caching::delete_caching;
@@ -92,9 +91,6 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                 let client_with_middleware = ClientBuilder::new(client)
                     .with(TracingMiddleware::default())
                     .build();
-
-                // let encoded_url = encode(&url).into_owned();
-                // info!("FETCH {}", encoded_url);
 
                 client_with_middleware.get(url).send().await
             })
