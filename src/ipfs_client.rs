@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
+use urlencoding::encode;
 
 use crate::app_context::AppContext;
 use crate::caching::delete_caching;
@@ -88,12 +89,12 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
                     .connect_timeout(std::time::Duration::from_millis(ctx.config.connect_timeout))
                     .timeout(std::time::Duration::from_millis(ctx.config.connect_timeout))
                     .build()?;
-                // let retry_policy =
-                //     ExponentialBackoff::builder().build_with_max_retries(ctx.config.max_retries);
                 let client_with_middleware = ClientBuilder::new(client)
                     .with(TracingMiddleware::default())
-                    // .with(RetryTransientMiddleware::new_with_policy(retry_policy))
                     .build();
+
+                // let encoded_url = encode(&url).into_owned();
+                // info!("FETCH {}", encoded_url);
 
                 client_with_middleware.get(url).send().await
             })
