@@ -30,7 +30,7 @@ pub fn run(ctx: AppContext, listener: TcpListener) -> anyhow::Result<Server> {
 
 fn config_app(app_ctx: web::Data<AppContext>) -> Box<dyn Fn(&mut ServiceConfig)> {
     Box::new(move |cfg: &mut ServiceConfig| {
-        cfg.service(web::resource("/ipfs/{ipfs_file:.*}").route(web::get().to(ipfs_file)));
+        cfg.service(web::resource("/ipfs/{ipfs_file:.+}").route(web::get().to(ipfs_file)));
 
         cfg.app_data(app_ctx.clone());
     })
