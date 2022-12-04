@@ -14,3 +14,5 @@ pause_gateway_seconds = 120
 delete_after_days = 5
 max_content_length = 104857600 # 100MB
 server_port = 3490
+db_max_connections = 100
+db_min_connections = 10
