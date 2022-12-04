@@ -1,4 +1,6 @@
-use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use sea_orm::{
+    ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement,
+};
 use std::fs::File;
 use std::path::Path;
 
@@ -31,6 +33,15 @@ impl AppContext {
             }
             Ok(db) => db,
         };
+
+        // For faster execution using multithread
+        db.execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "PRAGMA journal_mode=WAL;".to_owned(),
+        ))
+        .await
+        .expect("Can't set PRAGMA");
+
         AppContext { db, config }
     }
 }

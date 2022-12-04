@@ -15,6 +15,16 @@ pub struct Settings {
 }
 
 impl Settings {
+    pub fn full_ipfs_cache_directory(&self) -> String {
+        format!(
+            "{}/{}",
+            std::env::current_dir()
+                .expect("Can't get current directory")
+                .display(),
+            self.ipfs_cache_directory
+        )
+    }
+
     pub fn new() -> Result<Self, ConfigError> {
         let env_override = Environment::default().separator("__");
         let run_mode = if cfg!(test) {
