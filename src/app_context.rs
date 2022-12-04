@@ -1,4 +1,4 @@
-use sea_orm::{Database, DatabaseConnection};
+use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::fs::File;
 use std::path::Path;
 
@@ -11,6 +11,8 @@ pub struct AppContext {
 
 impl AppContext {
     pub async fn build() -> Self {
+        let config = Settings::new().expect("Can't create configuration");
+
         let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
             let filename = "objects.sqlite";
             if !Path::new(filename).exists() {
@@ -18,13 +20,17 @@ impl AppContext {
             }
             "sqlite://objects.sqlite".to_string()
         });
-        let db = match Database::connect(database_url).await {
+
+        let mut opt = ConnectOptions::new(database_url);
+        opt.max_connections(config.db_max_connections)
+            .min_connections(config.db_min_connections);
+
+        let db = match Database::connect(opt).await {
             Err(err) => {
                 panic!("Could not connect to database: {err}");
             }
             Ok(db) => db,
         };
-        let config = Settings::new().expect("Can't create configuration");
         AppContext { db, config }
     }
 }

@@ -10,6 +10,8 @@ pub struct Settings {
     pub delete_after_days: i64,
     pub max_content_length: u64,
     pub server_port: u16,
+    pub db_max_connections: u32,
+    pub db_min_connections: u32,
 }
 
 impl Settings {
