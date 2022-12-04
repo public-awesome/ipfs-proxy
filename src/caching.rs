@@ -23,8 +23,13 @@ pub async fn get_caching(
     ctx: Arc<AppContext>,
     ipfs_url: &str,
 ) -> Result<Option<Data>, anyhow::Error> {
-    let filename =
-        caching_filename(ipfs_url, &ctx.config.ipfs_cache_directory, None, false).await?;
+    let filename = caching_filename(
+        ipfs_url,
+        &ctx.config.full_ipfs_cache_directory(),
+        None,
+        false,
+    )
+    .await?;
     let filename = filename.as_str();
 
     debug!("Looking for {filename}");
@@ -63,14 +68,14 @@ pub async fn set_stream_caching(
 ) -> Result<Data, anyhow::Error> {
     let filename = caching_filename(
         ipfs_url,
-        &ctx.config.ipfs_cache_directory,
+        &ctx.config.full_ipfs_cache_directory(),
         content_type.clone(),
         true,
     )
     .await?;
 
     let mut tmp_file = Builder::new()
-        .prefix(&format!("{}/", &ctx.config.ipfs_cache_directory))
+        .prefix(&format!("{}/", &ctx.config.full_ipfs_cache_directory()))
         .tempfile()?;
 
     while let Some(bytes) = stream.next().await {
