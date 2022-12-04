@@ -16,13 +16,17 @@ pub struct Settings {
 
 impl Settings {
     pub fn full_ipfs_cache_directory(&self) -> String {
-        format!(
-            "{}/{}",
-            std::env::current_dir()
-                .expect("Can't get current directory")
-                .display(),
-            self.ipfs_cache_directory
-        )
+        if self.ipfs_cache_directory.starts_with('/') {
+            self.ipfs_cache_directory.clone()
+        } else {
+            format!(
+                "{}/{}",
+                std::env::current_dir()
+                    .expect("Can't get current directory")
+                    .display(),
+                self.ipfs_cache_directory
+            )
+        }
     }
 
     pub fn new() -> Result<Self, ConfigError> {
