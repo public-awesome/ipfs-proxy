@@ -1,4 +1,5 @@
 use crate::app_context::AppContext;
+use crate::config::Dimension;
 use actix_web::http::header;
 use actix_web::middleware::Logger;
 use actix_web::web::{self, ServiceConfig};
@@ -10,8 +11,9 @@ use actix_web::{
 };
 use imagesize::size;
 use mime;
+use serde::Deserialize;
 use std::net::TcpListener;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use tracing_actix_web::TracingLogger;
 
 use crate::ipfs_client;
@@ -58,7 +60,19 @@ fn make_app() -> App<
         .wrap(Compress::default())
 }
 
-async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Responder {
+#[derive(Deserialize)]
+struct ImageInfo {
+    #[serde(rename(deserialize = "img-width"))]
+    img_width: Option<String>,
+    #[serde(rename(deserialize = "img-height"))]
+    img_height: Option<String>,
+}
+
+async fn ipfs_file(
+    req: HttpRequest,
+    ctx: web::Data<AppContext>,
+    info: web::Query<ImageInfo>,
+) -> impl Responder {
     let ipfs_file = match req.match_info().get("ipfs_file") {
         Some(ipfs_file) => ipfs_file,
         None => {
@@ -69,8 +83,9 @@ async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Respond
     };
 
     let ipfs_file = format!("ipfs://{ipfs_file}");
+    let ctx = ctx.into_inner();
 
-    match ipfs_client::fetch_ipfs_data(ctx.into_inner(), &ipfs_file).await {
+    match ipfs_client::fetch_ipfs_data(ctx.clone(), &ipfs_file).await {
         Err(error) => HttpResponse::BadRequest().body(format!("Error: {error}")),
         Ok(data) => {
             let content_type = data
@@ -78,7 +93,53 @@ async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Respond
                 .unwrap_or_else(|| "application/octet-stream".to_string());
 
             match data.filename {
-                Some(filename) => {
+                Some(mut filename) => {
+                    let width = info
+                        .img_width
+                        .as_ref()
+                        .map(|w| w.parse::<u32>().ok())
+                        .flatten()
+                        .unwrap_or_default();
+                    let height = info
+                        .img_height
+                        .as_ref()
+                        .map(|h| h.parse::<u32>().ok())
+                        .flatten()
+                        .unwrap_or_default();
+
+                    // Resize was requested
+                    if width > 0
+                        && height > 0
+                        && ctx
+                            .clone()
+                            .config
+                            .permitted_resize_dimensions
+                            .contains(&Dimension { width, height })
+                    {
+                        debug!("Resizing to {}x{} is requested", &width, &height);
+                        let thumbnail_filename = format!("{}-{}x{}.png", &filename, width, height);
+
+                        if !std::path::Path::new(&thumbnail_filename).exists() {
+                            debug!("Resizing image {} to {}x{}", &filename, &width, &height);
+                            match image::open(&filename) {
+                                Err(error) => error!("Couldn't open file {}: {error}", &filename),
+                                Ok(img) => {
+                                    let thumbnail = img.resize(
+                                        width,
+                                        height,
+                                        image::imageops::FilterType::Lanczos3,
+                                    );
+
+                                    thumbnail
+                                        .save(&thumbnail_filename)
+                                        .expect("Saving image failed");
+                                }
+                            }
+                        }
+
+                        filename = thumbnail_filename;
+                    }
+
                     let mime_type = content_type
                         .parse()
                         .unwrap_or(mime::APPLICATION_OCTET_STREAM);

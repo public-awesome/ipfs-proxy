@@ -16,3 +16,7 @@ max_content_length = 104857600 # 100MB
 server_port = 3490
 db_max_connections = 100
 db_min_connections = 10
+
+[[permitted_resize_dimensions]]
+width = 100
+height = 100
