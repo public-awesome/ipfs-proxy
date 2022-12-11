@@ -54,3 +54,4 @@ mime = "0"
 mime_guess = "2"
 clap = { version = "4", features = ["derive"] }
 imagesize = "0.10"
+image = "0"

@@ -12,6 +12,13 @@ pub struct Settings {
     pub server_port: u16,
     pub db_max_connections: u32,
     pub db_min_connections: u32,
+    pub permitted_resize_dimensions: Vec<Dimension>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct Dimension {
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Settings {
