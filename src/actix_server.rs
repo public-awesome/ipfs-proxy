@@ -1,4 +1,5 @@
 use crate::app_context::AppContext;
+use actix_web::http::header;
 use actix_web::middleware::Logger;
 use actix_web::web::{self, ServiceConfig};
 use actix_web::{
@@ -7,6 +8,7 @@ use actix_web::{
     middleware::Compress,
     App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
+use imagesize::size;
 use mime;
 use std::net::TcpListener;
 use tracing::{debug, info};
@@ -76,14 +78,40 @@ async fn ipfs_file(req: HttpRequest, ctx: web::Data<AppContext>) -> impl Respond
                     let mime_type = content_type
                         .parse()
                         .unwrap_or(mime::APPLICATION_OCTET_STREAM);
-
-                    debug!("Streaming data {} from {}", &content_type, &filename);
-                    let file = actix_files::NamedFile::open_async(filename)
+                    let file = actix_files::NamedFile::open_async(&filename)
                         .await
                         .unwrap()
                         .disable_content_disposition()
                         .set_content_type(mime_type);
-                    file.into_response(&req)
+
+                    let mut response = file.into_response(&req);
+                    if let Ok(dim) = size(&filename) {
+                        debug!("Found dimension for filename {}: {:?}", &filename, &dim);
+
+                        let headers = response.headers_mut();
+
+                        headers.insert(
+                            reqwest::header::HeaderName::from_static("x-image-width"),
+                            reqwest::header::HeaderValue::from_str(&format!("{}", dim.width))
+                                .expect("Cant convert width to header value"),
+                        );
+
+                        headers.insert(
+                            reqwest::header::HeaderName::from_static("x-image-height"),
+                            reqwest::header::HeaderValue::from_str(&format!("{}", dim.height))
+                                .expect("Cant convert height to header value"),
+                        );
+
+                        headers.insert(
+                            header::HeaderName::from_static("x-image-size"),
+                            header::HeaderValue::from_str(&format!("{},{}", dim.width, dim.height))
+                                .expect("Cant convert width/height to header value"),
+                        );
+                    }
+
+                    debug!("Streaming data {} from {}", &content_type, &filename);
+
+                    response
                 }
                 None => HttpResponse::BadRequest().body("Error, no data.".to_string()),
             }
