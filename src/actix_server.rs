@@ -108,36 +108,41 @@ async fn ipfs_file(
                         .unwrap_or_default();
 
                     // Resize was requested
-                    if width > 0
-                        && height > 0
-                        && ctx
+                    if width > 0 && height > 0 {
+                        if !ctx
                             .clone()
                             .config
                             .permitted_resize_dimensions
                             .contains(&Dimension { width, height })
-                    {
-                        debug!("Resizing to {}x{} is requested", &width, &height);
-                        let thumbnail_filename = format!("{}-{}x{}.png", &filename, width, height);
+                        {
+                            return HttpResponse::BadRequest()
+                                .body("Requested dimensions are not allowed".to_string());
+                        } else {
+                            debug!("Resizing to {}x{} is requested", &width, &height);
+                            let thumbnail_filename =
+                                format!("{}-{}x{}.png", &filename, width, height);
 
-                        if !std::path::Path::new(&thumbnail_filename).exists() {
-                            debug!("Resizing image {} to {}x{}", &filename, &width, &height);
-                            match image::open(&filename) {
-                                Err(error) => error!("Couldn't open file {}: {error}", &filename),
-                                Ok(img) => {
-                                    let thumbnail = img.resize(
-                                        width,
-                                        height,
-                                        image::imageops::FilterType::Lanczos3,
-                                    );
+                            if !std::path::Path::new(&thumbnail_filename).exists() {
+                                debug!("Resizing image {} to {}x{}", &filename, &width, &height);
+                                match image::open(&filename) {
+                                    Err(error) => {
+                                        error!("Couldn't open file {}: {error}", &filename)
+                                    }
+                                    Ok(img) => {
+                                        let thumbnail = img.resize(
+                                            width,
+                                            height,
+                                            image::imageops::FilterType::Lanczos3,
+                                        );
 
-                                    thumbnail
-                                        .save(&thumbnail_filename)
-                                        .expect("Saving image failed");
+                                        thumbnail
+                                            .save(&thumbnail_filename)
+                                            .expect("Saving image failed");
+                                    }
                                 }
                             }
+                            filename = thumbnail_filename;
                         }
-
-                        filename = thumbnail_filename;
                     }
 
                     let mime_type = content_type
