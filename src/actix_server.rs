@@ -88,7 +88,7 @@ async fn ipfs_file(
     match ipfs_client::fetch_ipfs_data(ctx.clone(), &ipfs_file).await {
         Err(error) => HttpResponse::BadRequest().body(format!("Error: {error}")),
         Ok(data) => {
-            let content_type = data
+            let mut content_type = data
                 .content_type
                 .unwrap_or_else(|| "application/octet-stream".to_string());
 
@@ -142,6 +142,7 @@ async fn ipfs_file(
                                 }
                             }
                             filename = thumbnail_filename;
+                            content_type = "image/png".to_string();
                         }
                     }
 
