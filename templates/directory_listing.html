@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="description" content="A directory of files hosted on the distributed, decentralized web using IPFS">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ base_uri }} </title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body>
+    <div id="content">
+        <div id="content-header" class="d-flex flex-wrap">
+            <div>
+                <strong>
+                    Index of {{ base_uri }}
+                </strong>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table>
+                {% for file in files %}
+                <tr>
+                    <td class="type-icon">
+                        <div class="ipfs-_blank">&nbsp;</div>
+                    </td>
+                    <td>
+                        <a href="{{ file.1 }}">{{ file.1 }}</a>
+                    </td>
+                    <td class="no-linebreak">
+
+                        <a class="ipfs-hash" translate="no" href="{{ file.1 }}">
+                            {{ file.0 }}
+                        </a>
+
+                    </td>
+                    <td class="no-linebreak"></td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+</body>
+
+</html>

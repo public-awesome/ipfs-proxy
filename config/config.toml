@@ -17,6 +17,10 @@ server_port = 3490
 db_max_connections = 100
 db_min_connections = 10
 
+[ipfs]
+binary_path = "ipfs"
+enabled = false
+
 [[permitted_resize_dimensions]]
 width = 100
 height = 100

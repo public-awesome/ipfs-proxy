@@ -1,5 +1,6 @@
 use crate::app_context::AppContext;
 use crate::config::Dimension;
+use actix_files::Files;
 use actix_web::http::header;
 use actix_web::middleware::Logger;
 use actix_web::web::{self, ServiceConfig};
@@ -38,7 +39,8 @@ fn config_app(app_ctx: web::Data<AppContext>) -> Box<dyn Fn(&mut ServiceConfig)>
             web::resource("/ipfs/{ipfs_file:.+}")
                 .route(web::get().to(ipfs_file))
                 .route(web::head().to(ipfs_file)),
-        );
+        )
+        .service(Files::new("/static", "static"));
 
         cfg.app_data(app_ctx.clone());
     })

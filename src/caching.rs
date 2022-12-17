@@ -60,6 +60,35 @@ pub async fn get_caching(
     Ok(None)
 }
 
+pub async fn set_caching(
+    ctx: Arc<AppContext>,
+    ipfs_url: &str,
+    content_type: &str,
+    bytes: Vec<u8>,
+) -> Result<Data, anyhow::Error> {
+    let filename = caching_filename(
+        ipfs_url,
+        &ctx.config.full_ipfs_cache_directory(),
+        Some(content_type.to_string()),
+        true,
+    )
+    .await?;
+
+    let mut tmp_file = Builder::new()
+        .prefix(&format!("{}/", &ctx.config.full_ipfs_cache_directory()))
+        .tempfile()?;
+
+    tmp_file.write_all(bytes.as_ref())?;
+
+    fs::rename(&tmp_file, &filename).await?;
+    drop(tmp_file);
+
+    Ok(Data {
+        content_type: Some(content_type.to_string()),
+        filename: Some(filename),
+    })
+}
+
 pub async fn set_stream_caching(
     ctx: Arc<AppContext>,
     ipfs_url: &str,
