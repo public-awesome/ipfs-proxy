@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use anyhow::Context;
+use askama::Template;
 use chrono::{DateTime, Utc};
 use cid::Cid;
 use dashmap::DashMap;
@@ -11,6 +12,7 @@ use reqwest_middleware::ClientBuilder;
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use reqwest_tracing::TracingMiddleware;
 use std::fs;
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
@@ -19,6 +21,7 @@ use tracing::{debug, error, info};
 use crate::app_context::AppContext;
 use crate::caching::delete_caching;
 use crate::caching::get_caching;
+use crate::caching::set_caching;
 use crate::caching::set_stream_caching;
 use crate::caching::Data;
 use entity::ipfs_object::update_entry;
@@ -26,6 +29,13 @@ use entity::ipfs_object::update_entry;
 lazy_static! {
     static ref BLOCKED_GATEWAYS: tokio::sync::Mutex<DashMap<String, DateTime<Utc>>> =
         Default::default();
+}
+
+#[derive(Template)]
+#[template(path = "directory_listing.html")]
+struct DirectoryListingTemplate {
+    base_uri: String,
+    files: Vec<(String, String)>,
 }
 
 #[tracing::instrument(skip_all)]
@@ -56,6 +66,59 @@ pub async fn fetch_ipfs_data(ctx: Arc<AppContext>, ipfs_url: &str) -> Result<Dat
 
                 debug!("Return cached data");
                 return Ok(cached_data);
+            }
+        }
+    }
+
+    if ctx.config.ipfs.enabled {
+        match Command::new(ctx.config.ipfs.binary_path.clone())
+            .arg("ls")
+            .arg("-s")
+            .arg("--size=false")
+            .arg("--resolve-type=false")
+            .arg(&base_uri)
+            .output()
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    let text = String::from_utf8(output.stdout)?;
+                    let files = text
+                        .split("\n")
+                        .map(|line| {
+                            let splits = line.splitn(2, " ").collect::<Vec<&str>>();
+                            let cid = splits.first().map(|t| t.to_string()).unwrap_or_default();
+                            let filename = splits.last().map(|t| t.to_string()).unwrap_or_default();
+                            (cid, filename)
+                        })
+                        .filter(|file| file.1.is_empty() == false)
+                        .collect::<Vec<(String, String)>>();
+
+                    if !files.is_empty() {
+                        let template = DirectoryListingTemplate {
+                            base_uri: base_uri.clone(),
+                            files,
+                        };
+                        match template.render() {
+                            Ok(template) => {
+                                return Ok(set_caching(
+                                    ctx.clone(),
+                                    ipfs_url,
+                                    "text/html",
+                                    template.into(),
+                                )
+                                .await?);
+                            }
+                            Err(error) => {
+                                error!("Can't render template: {error}");
+                            }
+                        }
+                    }
+                } else {
+                    error!("Can't run ipfs ls, result non successful");
+                }
+            }
+            Err(error) => {
+                error!("Can't run ipfs ls: {error}");
             }
         }
     }

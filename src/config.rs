@@ -1,6 +1,6 @@
 use config::{Config, ConfigError, Environment, File};
 
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+#[derive(serde::Deserialize, Debug, Clone)]
 pub struct Settings {
     pub ipfs_gateways: Vec<String>,
     pub ipfs_cache_directory: String,
@@ -13,12 +13,19 @@ pub struct Settings {
     pub db_max_connections: u32,
     pub db_min_connections: u32,
     pub permitted_resize_dimensions: Vec<Dimension>,
+    pub ipfs: IpfsConfig,
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Dimension {
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct IpfsConfig {
+    pub enabled: bool,
+    pub binary_path: String,
 }
 
 impl Settings {
@@ -52,5 +59,5 @@ impl Settings {
             .build()?;
 
         settings.try_deserialize()
-    }
+    } 
 }
