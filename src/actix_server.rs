@@ -13,6 +13,7 @@ use imagesize::size;
 use mime;
 use serde::Deserialize;
 use std::net::TcpListener;
+use std::sync::Arc;
 use tracing::{debug, error, info};
 use tracing_actix_web::TracingLogger;
 
@@ -66,6 +67,8 @@ struct ImageInfo {
     img_width: Option<String>,
     #[serde(rename(deserialize = "img-height"))]
     img_height: Option<String>,
+    #[serde(rename(deserialize = "img-format"))]
+    img_format: Option<String>,
 }
 
 async fn ipfs_file(
@@ -88,104 +91,136 @@ async fn ipfs_file(
     match ipfs_client::fetch_ipfs_data(ctx.clone(), &ipfs_file).await {
         Err(error) => HttpResponse::BadRequest().body(format!("Error: {error}")),
         Ok(data) => {
-            let mut content_type = data
-                .content_type
-                .unwrap_or_else(|| "application/octet-stream".to_string());
+            let Some(content_type) = data.content_type else {
+                return HttpResponse::BadRequest().body("Can't find file format for the remote IPFS file".to_string());
+            };
 
             match data.filename {
-                Some(mut filename) => {
-                    let width = info
-                        .img_width
-                        .as_ref()
-                        .map(|w| w.parse::<u32>().ok())
-                        .flatten()
-                        .unwrap_or_default();
-                    let height = info
-                        .img_height
-                        .as_ref()
-                        .map(|h| h.parse::<u32>().ok())
-                        .flatten()
-                        .unwrap_or_default();
-
-                    // Resize was requested
-                    if width > 0 && height > 0 {
-                        if !ctx
-                            .clone()
-                            .config
-                            .permitted_resize_dimensions
-                            .contains(&Dimension { width, height })
-                        {
-                            return HttpResponse::BadRequest()
-                                .body("Requested dimensions are not allowed".to_string());
-                        } else {
-                            debug!("Resizing to {}x{} is requested", &width, &height);
-                            let thumbnail_filename =
-                                format!("{}-{}x{}.png", &filename, width, height);
-
-                            if !std::path::Path::new(&thumbnail_filename).exists() {
-                                debug!("Resizing image {} to {}x{}", &filename, &width, &height);
-                                match image::open(&filename) {
-                                    Err(error) => {
-                                        error!("Couldn't open file {}: {error}", &filename)
-                                    }
-                                    Ok(img) => {
-                                        let thumbnail = img.resize(
-                                            width,
-                                            height,
-                                            image::imageops::FilterType::Lanczos3,
-                                        );
-
-                                        thumbnail
-                                            .save(&thumbnail_filename)
-                                            .expect("Saving image failed");
-                                    }
-                                }
-                            }
-                            filename = thumbnail_filename;
-                            content_type = "image/png".to_string();
-                        }
+                Some(filename) => match resize_image(ctx, info, filename, content_type) {
+                    Ok((filename, content_type)) => {
+                        send_filename(&req, filename, content_type).await
                     }
+                    Err(error) => {
+                        error!("Error: {error}");
 
-                    let mime_type = content_type
-                        .parse()
-                        .unwrap_or(mime::APPLICATION_OCTET_STREAM);
-                    let file = actix_files::NamedFile::open_async(&filename)
-                        .await
-                        .unwrap()
-                        .disable_content_disposition()
-                        .set_content_type(mime_type);
-
-                    let mut response = file.into_response(&req);
-                    if let Ok(dim) = size(&filename) {
-                        debug!("Found dimension for filename {}: {:?}", &filename, &dim);
-
-                        let headers = response.headers_mut();
-
-                        headers.insert(
-                            reqwest::header::HeaderName::from_static("x-image-width"),
-                            reqwest::header::HeaderValue::from_str(&format!("{}", dim.width))
-                                .expect("Cant convert width to header value"),
-                        );
-
-                        headers.insert(
-                            reqwest::header::HeaderName::from_static("x-image-height"),
-                            reqwest::header::HeaderValue::from_str(&format!("{}", dim.height))
-                                .expect("Cant convert height to header value"),
-                        );
-
-                        headers.insert(
-                            header::HeaderName::from_static("x-image-size"),
-                            header::HeaderValue::from_str(&format!("{},{}", dim.width, dim.height))
-                                .expect("Cant convert width/height to header value"),
-                        );
+                        HttpResponse::BadRequest().body(format!("Error: {error}"))
                     }
-
-                    debug!("Streaming data {} from {}", &content_type, &filename);
-
-                    response
-                }
+                },
                 None => HttpResponse::BadRequest().body("Error, no data.".to_string()),
             }
         }
     }
+}
+
+async fn send_filename(req: &HttpRequest, filename: String, content_type: String) -> HttpResponse {
+    let mime_type = content_type
+        .parse()
+        .unwrap_or(mime::APPLICATION_OCTET_STREAM);
+    let file = actix_files::NamedFile::open_async(&filename)
+        .await
+        .unwrap()
+        .disable_content_disposition()
+        .set_content_type(mime_type);
+
+    let mut response = file.into_response(&req);
+    let Ok(dim) = size(&filename) else {
+        return response;
+    };
+
+    debug!("Found dimension for filename {}: {:?}", &filename, &dim);
+
+    let headers = response.headers_mut();
+
+    headers.insert(
+        reqwest::header::HeaderName::from_static("x-image-width"),
+        reqwest::header::HeaderValue::from_str(&format!("{}", dim.width))
+            .expect("Cant convert width to header value"),
+    );
+
+    headers.insert(
+        reqwest::header::HeaderName::from_static("x-image-height"),
+        reqwest::header::HeaderValue::from_str(&format!("{}", dim.height))
+            .expect("Cant convert height to header value"),
+    );
+
+    headers.insert(
+        header::HeaderName::from_static("x-image-size"),
+        header::HeaderValue::from_str(&format!("{},{}", dim.width, dim.height))
+            .expect("Cant convert width/height to header value"),
+    );
+
+    debug!("Streaming data {} from {}", &content_type, &filename);
+
+    response
+}
+
+fn resize_image(
+    ctx: Arc<AppContext>,
+    info: web::Query<ImageInfo>,
+    filename: String,
+    content_type: String,
+) -> Result<(String, String), anyhow::Error> {
+    let width = info
+        .img_width
+        .as_ref()
+        .map(|w| w.parse::<u32>().ok())
+        .flatten();
+    let height = info
+        .img_height
+        .as_ref()
+        .map(|h| h.parse::<u32>().ok())
+        .flatten();
+    let requested_file_format = info
+        .img_format
+        .as_ref()
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| "png".to_string());
+
+    let (Some(width), Some(height)) = (width, height) else {
+            return Ok((filename, content_type));
+        };
+
+    if !ctx
+        .clone()
+        .config
+        .permitted_resize_dimensions
+        .contains(&Dimension { width, height })
+    {
+        return Err(anyhow::anyhow!("Requested dimensions are not allowed"));
+    }
+
+    debug!("Resizing to {}x{} is requested", &width, &height);
+    let thumbnail_filename = match requested_file_format.as_str() {
+        "jpeg" => {
+            format!("{}-{}x{}.jpeg", &filename, width, height)
+        }
+
+        "png" | _ => {
+            format!("{}-{}x{}.png", &filename, width, height)
+        }
+    };
+
+    if !std::path::Path::new(&thumbnail_filename).exists() {
+        debug!("Resizing image {} to {}x{}", &filename, &width, &height);
+        match image::open(&filename) {
+            Err(error) => {
+                error!("Couldn't open file {}: {error}", &filename)
+            }
+            Ok(img) => {
+                let thumbnail = img.resize(width, height, image::imageops::FilterType::Lanczos3);
+
+                thumbnail
+                    .save(&thumbnail_filename)
+                    .expect("Saving image failed");
+            }
+        }
+    }
+    let filename = thumbnail_filename;
+    let content_type = match requested_file_format.as_str() {
+        "jpeg" => "image/jpeg".to_string(),
+
+        "png" | _ => "image/png".to_string(),
+    };
+
+    Ok((filename, content_type))
 }
