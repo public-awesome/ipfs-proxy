@@ -55,3 +55,4 @@ mime_guess = "2"
 clap = { version = "4", features = ["derive"] }
 imagesize = "0.10"
 image = "0"
+magick_rust = { version = "0.17.0" }
