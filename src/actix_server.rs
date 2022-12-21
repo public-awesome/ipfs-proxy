@@ -10,10 +10,12 @@ use actix_web::{
     App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use imagesize::size;
+use magick_rust::{magick_wand_genesis, MagickWand};
 use mime;
 use serde::Deserialize;
 use std::net::TcpListener;
 use std::sync::Arc;
+use std::sync::Once;
 use tracing::{debug, error, info};
 use tracing_actix_web::TracingLogger;
 
@@ -69,6 +71,8 @@ struct ImageInfo {
     img_height: Option<String>,
     #[serde(rename(deserialize = "img-format"))]
     img_format: Option<String>,
+    #[serde(rename(deserialize = "video-format"))]
+    video_format: Option<String>,
 }
 
 async fn ipfs_file(
@@ -160,6 +164,10 @@ fn resize_image(
     filename: String,
     content_type: String,
 ) -> Result<(String, String), anyhow::Error> {
+    if info.video_format.is_some() {
+        return resize_video(ctx, info, filename, content_type);
+    }
+
     let width = info
         .img_width
         .as_ref()
@@ -194,7 +202,9 @@ fn resize_image(
         "jpeg" => {
             format!("{}-{}x{}.jpeg", &filename, width, height)
         }
-
+        "mp4" => {
+            format!("{}-{}x{}.mp4", &filename, width, height)
+        }
         "png" | _ => {
             format!("{}-{}x{}.png", &filename, width, height)
         }
@@ -218,8 +228,85 @@ fn resize_image(
     let filename = thumbnail_filename;
     let content_type = match requested_file_format.as_str() {
         "jpeg" => "image/jpeg".to_string(),
-
+        "mp4" => "video/mp4".to_string(),
         "png" | _ => "image/png".to_string(),
+    };
+
+    Ok((filename, content_type))
+}
+
+// Used to make sure MagickWand is initialized exactly once. Note that we
+// do not bother shutting down, we simply exit when we're done.
+static START: Once = Once::new();
+
+fn resize_video(
+    ctx: Arc<AppContext>,
+    info: web::Query<ImageInfo>,
+    filename: String,
+    _content_type: String,
+) -> Result<(String, String), anyhow::Error> {
+    let width = info
+        .img_width
+        .as_ref()
+        .map(|w| w.parse::<u32>().ok())
+        .flatten();
+    let height = info
+        .img_height
+        .as_ref()
+        .map(|h| h.parse::<u32>().ok())
+        .flatten();
+    let requested_file_format = info
+        .video_format
+        .as_ref()
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| "png".to_string());
+
+    let extension = match requested_file_format.as_str() {
+        "webm" => ".webm",
+        "mp4" | _ => ".mp4",
+    };
+    let mut thumbnail_filename = format!("{}.{}", &filename, &extension);
+
+    if let (Some(width), Some(height)) = (width, height) {
+        thumbnail_filename = format!("{}-{}x{}.{}", &filename, width, height, &extension);
+    }
+
+    if !std::path::Path::new(&thumbnail_filename).exists() {
+        START.call_once(|| {
+            magick_wand_genesis();
+        });
+
+        let wand = MagickWand::new();
+
+        match wand.read_image(&filename) {
+            Err(error) => {
+                error!("Couldn't open file {}: {error}", &filename)
+            }
+            Ok(_) => {
+                if let (Some(width), Some(height)) = (width, height) {
+                    if !ctx
+                        .clone()
+                        .config
+                        .permitted_resize_dimensions
+                        .contains(&Dimension { width, height })
+                    {
+                        return Err(anyhow::anyhow!("Requested dimensions are not allowed"));
+                    }
+                    debug!("Resizing video {} to {}x{}", &filename, &width, &height);
+
+                    wand.fit(width as usize, height as usize);
+                };
+
+                wand.write_image(&thumbnail_filename)
+                    .expect("Saving video failed");
+            }
+        }
+    }
+
+    let filename = thumbnail_filename;
+    let content_type = match requested_file_format.as_str() {
+        "webm" => "video/webm".to_string(),
+        "mp4" | _ => "video/mp4".to_string(),
     };
 
     Ok((filename, content_type))
